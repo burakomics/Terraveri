@@ -97,8 +97,13 @@ select:focus,input:focus,textarea:focus{outline:2px solid var(--accent);outline-
 .modebar{display:flex;gap:4px;background:rgba(255,255,255,0.08);border-radius:9px;padding:3px}
 .mode-btn{padding:7px 13px;border-radius:7px;border:none;background:transparent;color:var(--header-fg-muted);font-size:12px;font-weight:600}
 .mode-btn[aria-pressed="true"]{background:var(--header-fg);color:var(--header-bg)}
-.session-chip{margin-left:auto;display:flex;align-items:center;gap:7px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--header-fg-muted);padding:5px 11px;border:1px solid rgba(255,255,255,0.14);border-radius:999px}
+.topbar-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.session-chip{display:flex;align-items:center;gap:7px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--header-fg-muted);padding:5px 11px;border:1px solid rgba(255,255,255,0.14);border-radius:999px}
 .session-chip b{color:var(--header-fg);font-weight:700}
+.nav-link{display:inline-flex;align-items:center;gap:6px;padding:7px 13px;border-radius:8px;border:1px solid rgba(255,255,255,0.18);color:var(--header-fg);text-decoration:none;font-size:12px;font-weight:600;background:rgba(255,255,255,0.06);transition:background .15s ease}
+.nav-link:hover{background:rgba(255,255,255,0.14)}
+.nav-link .arrow{transition:transform .15s ease}
+.nav-link:hover .arrow{transform:translateX(2px)}
 
 /* legend */
 .legend{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--surface-sunk);border-bottom:1px solid var(--border);padding:8px clamp(14px,2vw,24px);font-size:11px;color:var(--fg-muted)}
@@ -271,7 +276,10 @@ select:focus,input:focus,textarea:focus{outline:2px solid var(--accent);outline-
     <button class="mode-btn" data-mode="new" aria-pressed="false" type="button">New sheep</button>
     <button class="mode-btn" data-mode="bulk" aria-pressed="false" type="button">Bulk upload</button>
   </div>
-  <div class="session-chip">records this session <b id="sessionCount">0</b></div>
+  <div class="topbar-right">
+    <div class="session-chip">records this session <b id="sessionCount">0</b></div>
+    <a class="nav-link" href="index.html">Biomarker deep-dive <span class="arrow">→</span></a>
+  </div>
 </div>
 
 <div class="legend">
