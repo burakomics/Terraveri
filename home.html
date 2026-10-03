@@ -1,0 +1,1468 @@
+<title>TerraVeri Check-In</title>
+<style>
+/*
+  Design plan — TerraVeri Check-In (v2 — reference build)
+  Subject: this file is meant to be read, not just looked at — it is going
+  into Git as the reference Akif and Ryan build the real system from. The
+  job of the design is to make the ENGINE visible: every field on screen
+  is tagged with where its value comes from (pulled from the record,
+  computed, carried over, or genuinely typed), so the template mechanism
+  described in the developer's guide is something you can see working,
+  not just read about.
+  Layout: a dense three-pane dashboard (lifecycle + roster / active
+  template / effects + log) instead of one long scrolling form, so the
+  whole check-in fits a single working screen — a real console, not a
+  survey.
+  Palette: the established TerraVeri tokens (paper/ink/teal/ochre) plus
+  one more semantic layer — four source-badge colors (auto / calc /
+  carried / type) that recur everywhere a field is rendered, so the
+  colors themselves teach the mechanism at a glance.
+*/
+:root{
+  --bg:#F4F1EA;
+  --surface:#FFFFFF;
+  --surface-2:#FBF9F3;
+  --surface-sunk:#ECE7D9;
+  --fg:#1B1F1D;
+  --fg-muted:#5A605C;
+  --fg-faint:#8A8F89;
+  --border:#DCD6C8;
+  --border-strong:#C7BFA9;
+  --accent:#C17A3E;
+  --accent-ink:#FFFFFF;
+  --good:#4F7A6B;
+  --good-ink:#FFFFFF;
+  --flag:#A6453B;
+  --flag-ink:#FFFFFF;
+  --header-bg:#1B1F1D;
+  --header-fg:#F4F1EA;
+  --header-fg-muted:#9AA39B;
+  --src-lookup:#4F7A6B;
+  --src-formula:#C17A3E;
+  --src-sticky:#5C7691;
+  --src-input:#A6453B;
+  --shadow:0 1px 2px rgba(27,31,29,0.06);
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#14160F; --surface:#1D2018; --surface-2:#20231A; --surface-sunk:#191B14;
+    --fg:#EDE9DC; --fg-muted:#A5A999; --fg-faint:#767A6B;
+    --border:#333526; --border-strong:#44452F;
+    --accent:#DB9459; --accent-ink:#1B1F1D;
+    --good:#73A294; --good-ink:#0E1512;
+    --flag:#D9736A; --flag-ink:#1B1F1D;
+    --header-bg:#0E100B; --header-fg:#EDE9DC; --header-fg-muted:#767A6B;
+    --src-lookup:#73A294; --src-formula:#DB9459; --src-sticky:#86A4C2; --src-input:#D9736A;
+    --shadow:0 1px 2px rgba(0,0,0,0.3);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#14160F; --surface:#1D2018; --surface-2:#20231A; --surface-sunk:#191B14;
+  --fg:#EDE9DC; --fg-muted:#A5A999; --fg-faint:#767A6B;
+  --border:#333526; --border-strong:#44452F;
+  --accent:#DB9459; --accent-ink:#1B1F1D;
+  --good:#73A294; --good-ink:#0E1512;
+  --flag:#D9736A; --flag-ink:#1B1F1D;
+  --header-bg:#0E100B; --header-fg:#EDE9DC; --header-fg-muted:#767A6B;
+  --src-lookup:#73A294; --src-formula:#DB9459; --src-sticky:#86A4C2; --src-input:#D9736A;
+  --shadow:0 1px 2px rgba(0,0,0,0.3);
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px;line-height:1.4}
+.mono{font-family:'IBM Plex Mono',ui-monospace,monospace}
+.serif{font-family:'Spectral',Georgia,serif}
+h1,h2,h3{margin:0;text-wrap:balance}
+button{font-family:inherit;cursor:pointer}
+label{font-size:11px;font-weight:600;letter-spacing:0.2px;color:var(--fg-muted);display:block;margin-bottom:4px}
+select,input,textarea{
+  width:100%;padding:8px 9px;border:1px solid var(--border-strong);border-radius:7px;
+  background:var(--surface);color:var(--fg);font-size:12.5px;font-family:inherit;min-width:0;
+}
+select:focus,input:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:var(--accent)}
+.grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+@media (max-width:1180px){.grid2{grid-template-columns:1fr}}
+
+/* ---------- top bar ---------- */
+.topbar{
+  background:var(--header-bg);color:var(--header-fg);padding:11px clamp(14px,2vw,24px);
+  display:flex;align-items:center;gap:14px;flex-wrap:wrap;border-bottom:1px solid rgba(255,255,255,0.08);
+}
+.brand{display:flex;align-items:baseline;gap:9px;flex-shrink:0}
+.brand-mark{font-family:'Spectral',Georgia,serif;font-weight:600;font-size:17px}
+.brand-sub{font-size:10.5px;letter-spacing:1.4px;text-transform:uppercase;color:var(--header-fg-muted)}
+.modebar{display:flex;gap:4px;background:rgba(255,255,255,0.08);border-radius:9px;padding:3px}
+.mode-btn{padding:7px 13px;border-radius:7px;border:none;background:transparent;color:var(--header-fg-muted);font-size:12px;font-weight:600}
+.mode-btn[aria-pressed="true"]{background:var(--header-fg);color:var(--header-bg)}
+.session-chip{margin-left:auto;display:flex;align-items:center;gap:7px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--header-fg-muted);padding:5px 11px;border:1px solid rgba(255,255,255,0.14);border-radius:999px}
+.session-chip b{color:var(--header-fg);font-weight:700}
+
+/* legend */
+.legend{display:flex;align-items:center;gap:14px;flex-wrap:wrap;background:var(--surface-sunk);border-bottom:1px solid var(--border);padding:8px clamp(14px,2vw,24px);font-size:11px;color:var(--fg-muted)}
+.legend b{color:var(--fg)}
+.legend-item{display:flex;align-items:center;gap:5px}
+.legend-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+
+/* ---------- dashboard grid ---------- */
+.dash{display:grid;grid-template-columns:260px minmax(0,1fr) 300px;gap:1px;background:var(--border);align-items:start}
+@media (max-width:1180px){.dash{grid-template-columns:1fr}}
+.pane{background:var(--bg)}
+.pane-inner{padding:14px clamp(14px,2vw,18px) 22px;display:flex;flex-direction:column;gap:14px}
+.pane-title{font-size:10.5px;letter-spacing:1.1px;text-transform:uppercase;color:var(--fg-faint);font-weight:700}
+
+/* lifecycle cycle diagram */
+.cycle-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;align-items:center;gap:6px}
+.cycle-caption{font-size:11px;color:var(--fg-muted);text-align:center}
+
+/* search + roster */
+.search{width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:7px;background:var(--surface);color:var(--fg);font-size:12.5px}
+.combo{position:relative}
+.combo-list{position:absolute;top:calc(100% + 4px);left:0;right:0;z-index:5;background:var(--surface);border:1px solid var(--border-strong);border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.12);max-height:220px;overflow-y:auto;display:none}
+.combo-list[data-open="true"]{display:block}
+.combo-opt{display:flex;flex-direction:column;gap:1px;padding:8px 10px;width:100%;border:none;background:transparent;text-align:left;font-size:12px}
+.combo-opt:hover{background:var(--surface-sunk)}
+.combo-opt .t{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:11.5px}
+.combo-opt .s{color:var(--fg-muted);font-size:11px}
+.roster-mini{display:flex;flex-direction:column;gap:5px;max-height:260px;overflow-y:auto}
+.roster-row{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:7px;border:1px solid var(--border);background:var(--surface);font-size:11.5px}
+.roster-row[aria-current="true"]{border-color:var(--accent);background:var(--surface-2)}
+.roster-row .d{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.roster-row .t{font-family:'IBM Plex Mono',monospace;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* template card (center) */
+.tpl-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px clamp(14px,2vw,20px);display:flex;flex-direction:column;gap:16px}
+.tpl-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.tpl-head .name{font-family:'Spectral',Georgia,serif;font-size:18px;font-weight:600}
+.tpl-head .sub{font-size:11.5px;color:var(--fg-muted)}
+.empty-select{font-size:12px;color:var(--fg-faint);padding:30px 4px;text-align:center}
+
+.field-wrap{display:flex;flex-direction:column;min-width:0}
+.field-top{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:4px}
+.src-badge{font-size:9px;font-weight:700;letter-spacing:0.4px;text-transform:uppercase;padding:2px 6px;border-radius:5px;flex-shrink:0}
+.src-badge.lookup{background:color-mix(in srgb, var(--src-lookup) 16%, var(--surface));color:var(--src-lookup)}
+.src-badge.formula{background:color-mix(in srgb, var(--src-formula) 16%, var(--surface));color:var(--src-formula)}
+.src-badge.sticky{background:color-mix(in srgb, var(--src-sticky) 16%, var(--surface));color:var(--src-sticky)}
+.src-badge.input{background:color-mix(in srgb, var(--src-input) 14%, var(--surface));color:var(--src-input)}
+.field-wrap.readonly .static-val{padding:8px 9px;border:1px solid var(--border);border-radius:7px;background:var(--surface-sunk);font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:var(--fg)}
+.trend-tag{font-size:10.5px;font-weight:700;margin-left:4px}
+.spark{margin-top:5px;line-height:0}
+.spark-svg{display:block}
+.field-wrap.src-input input,.field-wrap.src-input select{border-color:var(--src-input);border-width:1.5px}
+
+/* digital twin */
+.twin-row{display:flex;flex-direction:column;gap:8px;padding-top:4px;border-top:1px solid var(--border)}
+.twin-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.twin-head .hint{font-size:11px;color:var(--fg-faint)}
+.twin-slots{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.twin-slot{position:relative;aspect-ratio:1;border:1.5px dashed var(--border-strong);border-radius:10px;background:var(--surface-sunk);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;overflow:hidden;cursor:pointer}
+.twin-slot input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.twin-slot .lbl{font-size:10.5px;color:var(--fg-faint);text-align:center;padding:0 6px}
+.twin-slot img{width:100%;height:100%;object-fit:cover}
+.twin-slot .rm{position:absolute;top:4px;right:4px;width:18px;height:18px;border-radius:50%;background:rgba(0,0,0,0.6);color:#fff;border:none;font-size:11px;line-height:1;display:flex;align-items:center;justify-content:center;z-index:2}
+
+.actions-row{display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap}
+.btn{padding:9px 16px;border-radius:8px;border:1px solid var(--border-strong);background:var(--surface);color:var(--fg);font-size:12.5px;font-weight:600}
+.btn-primary{background:var(--fg);border-color:var(--fg);color:var(--bg)}
+.btn-primary[disabled]{opacity:0.4;cursor:not-allowed}
+
+/* effects / on-save panel */
+.effects-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px;display:flex;flex-direction:column;gap:8px}
+.effects-card .lead{font-size:11.5px;color:var(--fg-muted)}
+.effects-list{display:flex;flex-direction:column;gap:6px}
+.effects-list li{list-style:none;display:flex;gap:7px;font-size:11.5px;align-items:flex-start}
+.effects-list li::before{content:'→';color:var(--accent);font-weight:700;flex-shrink:0}
+
+/* log */
+.log-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.log-row{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px solid var(--border);font-size:11.5px}
+.log-row:last-child{border-bottom:none}
+.log-row .t{display:flex;justify-content:space-between;gap:6px}
+.log-row .tag{font-family:'IBM Plex Mono',monospace;font-weight:600}
+.log-row .d{color:var(--fg-muted)}
+.log-empty{font-size:11.5px;color:var(--fg-faint);padding:10px 2px}
+.badge-new{font-size:9px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;padding:2px 6px;border-radius:5px;background:var(--good);color:var(--good-ink)}
+.badge-bulk{font-size:9px;font-weight:700;letter-spacing:0.3px;text-transform:uppercase;padding:2px 6px;border-radius:5px;background:var(--src-sticky);color:#fff}
+
+/* ---------- bulk mode ---------- */
+.bulk-wrap{max-width:1040px;margin:0 auto;padding:18px clamp(14px,2vw,24px) 40px;display:flex;flex-direction:column;gap:16px}
+.bulk-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px clamp(14px,2vw,20px);display:flex;flex-direction:column;gap:12px}
+.bulk-card textarea{min-height:120px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;resize:vertical}
+.bulk-table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:9px}
+.bulk-table{width:100%;border-collapse:collapse;font-size:11.5px;font-family:'IBM Plex Mono',monospace}
+.bulk-table th{text-align:left;padding:7px 10px;background:var(--surface-sunk);color:var(--fg-muted);font-weight:600;font-size:10px;letter-spacing:0.3px;text-transform:uppercase;white-space:nowrap}
+.bulk-table td{padding:6px 10px;border-top:1px solid var(--border);white-space:nowrap}
+.bulk-hint{font-size:11px;color:var(--fg-faint)}
+
+.toast{position:fixed;bottom:16px;left:50%;transform:translateX(-50%) translateY(8px);background:var(--fg);color:var(--bg);padding:9px 16px;border-radius:9px;font-size:12.5px;font-weight:600;opacity:0;transition:opacity 0.25s ease, transform 0.25s ease;pointer-events:none;z-index:20}
+.toast[data-show="true"]{opacity:1;transform:translateX(-50%) translateY(0)}
+[hidden]{display:none!important}
+
+/* ---------- confirm-before-save modal ---------- */
+.confirm-overlay{position:fixed;inset:0;background:rgba(10,12,9,0.52);display:flex;align-items:center;justify-content:center;padding:20px;z-index:30}
+.confirm-box{background:var(--surface);border:1px solid var(--border-strong);border-radius:14px;padding:20px;max-width:360px;width:100%;box-shadow:0 18px 44px rgba(0,0,0,0.28);display:flex;flex-direction:column;gap:12px;animation:popIn .16s ease both}
+@keyframes popIn{from{opacity:0;transform:translateY(6px) scale(0.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+.confirm-eyebrow{font-size:10px;letter-spacing:0.8px;text-transform:uppercase;color:var(--fg-faint);font-weight:700}
+.confirm-title{font-family:'Spectral',serif;font-size:19px;font-weight:600;color:var(--fg)}
+.confirm-summary{font-size:12.5px;color:var(--fg-muted);line-height:1.5}
+.confirm-summary b{color:var(--fg);font-family:'IBM Plex Mono',monospace}
+.confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+
+/* ---------- save flash ---------- */
+@keyframes savedFlash{0%{background:color-mix(in srgb, var(--good) 20%, var(--surface))}100%{background:var(--surface)}}
+.tpl-card.just-saved{animation:savedFlash 1.1s ease}
+.cycle-card.just-advanced{animation:savedFlash 1.3s ease}
+.saved-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;color:var(--good);background:color-mix(in srgb, var(--good) 14%, var(--surface));border-radius:7px;padding:4px 9px}
+
+/* ---------- cascade event picker ---------- */
+.ep-hint{font-size:11px;color:var(--fg-muted);margin:-2px 0 2px}
+.event-picker{display:flex;flex-direction:column;gap:12px}
+.ep-group-label{display:flex;align-items:center;gap:6px;font-size:10px;letter-spacing:0.6px;text-transform:uppercase;color:var(--fg-faint);font-weight:700;margin-bottom:6px}
+.ep-group-label .ep-rule{flex:1;height:1px;background:var(--border)}
+.ep-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:7px}
+.ep-pill{display:flex;align-items:flex-start;gap:7px;padding:8px 10px;border-radius:9px;border:1.5px solid var(--border);background:var(--surface);cursor:pointer;text-align:left;font-family:inherit;font-size:12px;font-weight:600;color:var(--fg);transition:border-color .15s ease,background .15s ease,transform .1s ease}
+.ep-pill:hover:not(:disabled){border-color:var(--accent)}
+.ep-pill:active:not(:disabled){transform:scale(0.98)}
+.ep-pill[aria-pressed="true"]{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 13%, var(--surface))}
+.ep-pill:disabled{cursor:not-allowed;opacity:0.58}
+.ep-pill .ep-icon{flex-shrink:0;line-height:1.3;font-size:12px}
+.ep-pill .ep-body{min-width:0;display:flex;flex-direction:column}
+.ep-pill .ep-note{display:block;font-size:9.5px;font-weight:500;color:var(--fg-faint);margin-top:1px;white-space:normal}
+.ep-pill.ep-done .ep-label{text-decoration:line-through;text-decoration-color:var(--border-strong);color:var(--fg-muted)}
+.ep-closed-note{display:flex;gap:9px;align-items:flex-start;background:var(--surface-sunk);border:1px solid var(--border);border-radius:10px;padding:12px 14px;font-size:12px;color:var(--fg-muted);line-height:1.5}
+.ep-closed-note b{color:var(--fg)}
+.ep-pill.ep-unlocked-flash{animation:unlockPulse 1.6s ease}
+@keyframes unlockPulse{0%{box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);border-color:var(--accent)}70%{box-shadow:0 0 0 9px color-mix(in srgb, var(--accent) 0%, transparent)}100%{box-shadow:none}}
+
+/* ---------- flock-wide stats strip ---------- */
+.flockstats{display:flex;gap:1px;background:var(--border);border-bottom:1px solid var(--border);overflow-x:auto}
+.statcell{flex:1 1 150px;min-width:150px;background:var(--surface);padding:10px clamp(14px,2vw,22px);display:flex;flex-direction:column;gap:2px}
+.statcell .label{font-size:10px;letter-spacing:0.9px;text-transform:uppercase;color:var(--fg-faint)}
+.statcell .value{font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:600;font-variant-numeric:tabular-nums}
+.statcell .value.accent{color:var(--accent)}
+.statcell .value.flag{color:var(--flag)}
+.statcell .value.good{color:var(--good)}
+
+/* ---------- live feed ---------- */
+.feed-card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:7px}
+.feed-list{display:flex;flex-direction:column;gap:7px;max-height:220px;overflow-y:auto}
+.feed-item{display:flex;gap:7px;align-items:flex-start;font-size:11px;padding-bottom:7px;border-bottom:1px solid var(--border)}
+.feed-item:last-child{border-bottom:none;padding-bottom:0}
+.feed-dot{width:6px;height:6px;border-radius:50%;margin-top:4px;flex-shrink:0}
+.feed-body{display:flex;flex-direction:column;gap:1px;min-width:0}
+.feed-text{color:var(--fg)}
+.feed-time{font-family:'IBM Plex Mono',monospace;font-size:9.5px;color:var(--fg-faint)}
+
+/* ---------- motion polish ---------- */
+@keyframes fadeSlideIn{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.field-wrap{animation:fadeSlideIn .22s ease both}
+.log-row{animation:fadeSlideIn .2s ease both}
+.feed-item.is-new{animation:fadeSlideIn .3s ease both}
+.roster-row{transition:border-color .15s ease, background .15s ease}
+@media (prefers-reduced-motion:reduce){.field-wrap,.log-row,.feed-item.is-new,.confirm-box,.tpl-card.just-saved,.cycle-card.just-advanced,.ep-pill.ep-unlocked-flash{animation:none}}
+</style>
+
+<div class="topbar">
+  <div class="brand"><span class="brand-mark">TerraVeri</span><span class="brand-sub">Check-In</span></div>
+  <div class="modebar" id="modeBar">
+    <button class="mode-btn" data-mode="existing" aria-pressed="true" type="button">Existing sheep</button>
+    <button class="mode-btn" data-mode="new" aria-pressed="false" type="button">New sheep</button>
+    <button class="mode-btn" data-mode="bulk" aria-pressed="false" type="button">Bulk upload</button>
+  </div>
+  <div class="session-chip">records this session <b id="sessionCount">0</b></div>
+</div>
+
+<div class="legend">
+  <span><b>How to read a field:</b> every label below is tagged with where its value comes from.</span>
+  <span class="legend-item"><span class="legend-dot" style="background:var(--src-lookup)"></span><b>auto</b> — read off the sheep's record</span>
+  <span class="legend-item"><span class="legend-dot" style="background:var(--src-formula)"></span><b>predict</b> — a trend fit to its history, with a confidence score</span>
+  <span class="legend-item"><span class="legend-dot" style="background:var(--src-sticky)"></span><b>carried</b> — kept from your last entry</span>
+  <span class="legend-item"><span class="legend-dot" style="background:var(--src-input)"></span><b>type</b> — the only real input</span>
+</div>
+
+<div class="flockstats" id="flockStats"></div>
+
+<!-- EXISTING / NEW dashboard -->
+<div class="dash" id="dashView">
+  <!-- LEFT: lifecycle + roster -->
+  <div class="pane">
+    <div class="pane-inner">
+      <span class="pane-title" id="cycleTitleLabel">The life cycle</span>
+      <div class="cycle-card" id="cycleCard">
+        <svg id="cycleSvg" viewBox="0 0 220 220" width="100%" role="img" aria-label="Sheep life-cycle stages, current stage highlighted"></svg>
+        <div class="cycle-caption" id="cycleCaption">Select a sheep to see where it sits in the cycle.</div>
+      </div>
+
+      <span class="pane-title" id="rosterLabel">Flock roster</span>
+      <div class="combo">
+        <input type="text" id="sheepSearch" class="search" placeholder="Search tag or breed…" autocomplete="off">
+        <div class="combo-list" id="sheepOptions"></div>
+      </div>
+      <div class="roster-mini" id="rosterMini"></div>
+    </div>
+  </div>
+
+  <!-- CENTER: active template -->
+  <div class="pane">
+    <div class="pane-inner">
+      <span class="pane-title">Active template</span>
+      <div class="tpl-card" id="tplCard"></div>
+    </div>
+  </div>
+
+  <!-- RIGHT: on-save effects + log -->
+  <div class="pane">
+    <div class="pane-inner">
+      <span class="pane-title">On save, the system</span>
+      <div class="effects-card" id="effectsCard"></div>
+
+      <span class="pane-title">Live feed — flock-wide</span>
+      <div class="feed-card"><div class="feed-list" id="feedList"></div></div>
+
+      <span class="pane-title">This session's entries</span>
+      <div class="log-card">
+        <div class="roster-mini" id="logList" style="max-height:360px"></div>
+        <div class="log-empty" id="logEmpty">Nothing logged yet.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BULK mode -->
+<div class="bulk-wrap" id="bulkView" hidden>
+  <div class="bulk-card">
+    <div>
+      <span class="pane-title">Bulk upload — new sheep</span>
+      <div class="bulk-hint" style="margin-top:4px">Paste rows as <span class="mono">tag,breed,sex,dam,sire,birth_date</span> — one sheep per line. Blank tag auto-assigns the next number. Paddock and handler below apply to the whole batch.</div>
+    </div>
+    <textarea id="bulkInput" placeholder="TV-1500,Merino,Ewe,TV-0231,,2026-09-28&#10;TV-1501,Long-tail Kashmiri,Ram,,TV-0458,2026-09-29&#10;,Merino,Ewe,,,2026-09-30"></textarea>
+    <div class="grid2">
+      <div>
+        <label>Paddock for this batch</label>
+        <select id="bulkPaddock"></select>
+      </div>
+      <div>
+        <label>Handler for this batch</label>
+        <select id="bulkHandler"></select>
+      </div>
+    </div>
+    <div class="actions-row">
+      <button class="btn" type="button" id="bulkParse">Parse rows</button>
+      <button class="btn btn-primary" type="button" id="bulkImport" disabled>Import all</button>
+    </div>
+    <div class="bulk-table-wrap" id="bulkPreviewWrap" hidden>
+      <table class="bulk-table" id="bulkPreviewTable"></table>
+    </div>
+  </div>
+
+  <div class="bulk-card">
+    <span class="pane-title">This session's entries</span>
+    <div class="roster-mini" id="logListBulk" style="max-height:320px"></div>
+    <div class="log-empty" id="logEmptyBulk">Nothing imported yet.</div>
+  </div>
+</div>
+
+<div class="toast" id="toast">Saved</div>
+
+<div class="confirm-overlay" id="confirmOverlay" hidden>
+  <div class="confirm-box" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle">
+    <div class="confirm-eyebrow" id="confirmEyebrow">Confirm entry</div>
+    <div class="confirm-title" id="confirmTitle">Save this?</div>
+    <div class="confirm-summary" id="confirmSummary"></div>
+    <div class="confirm-actions">
+      <button class="btn" type="button" id="confirmCancel">Cancel</button>
+      <button class="btn btn-primary" type="button" id="confirmOk">Confirm &amp; save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* =========================================================================
+   TerraVeri Check-In — reference build
+   -------------------------------------------------------------------------
+   This file is written to be READ, not just run. It implements, as working
+   code, the template/resolve engine described in the TerraVeri Developer
+   Guide: STAGES, DATA, FORMULAS, TEMPLATES, then one resolve() function
+   that turns (sheep, eventType) into a populated, source-tagged field
+   list. The UI layer (RENDER section) does nothing but draw whatever
+   resolve() returns — add a new event type by adding a TEMPLATES entry,
+   no UI code required.
+   ========================================================================= */
+
+"use strict";
+
+/* ---------------------------------------------------------------------- *
+ * STAGES — the six-stage life cycle. Health Event is a branch, not a
+ * seventh sequential stage (it can attach to a sheep at any point).
+ * ---------------------------------------------------------------------- */
+var STAGES = ["Birth & Lambing","Weaning","Growth & Grazing","Shearing","Breeding","Sale / Exit"];
+
+/* ---------------------------------------------------------------------- *
+ * DATA — stand-in for what would be real tables (Sheep, Paddock, Member).
+ * ---------------------------------------------------------------------- */
+var roster = [
+  { id:"tv-0231", tag:"TV-0231", breed:"Merino", sex:"Ewe", birthDaysAgo:420, stageIdx:2, lastEventType:"weaning", lastEventDaysAgo:142, paddock:"Tosamaidan", photos:[] },
+  { id:"tv-0547", tag:"TV-0547", breed:"Long-tail Kashmiri", sex:"Ram", birthDaysAgo:660, stageIdx:4, lastEventType:"mating", lastEventDaysAgo:8, paddock:"Doodhpathri", photos:[] },
+  { id:"tv-0892", tag:"TV-0892", breed:"Merino", sex:"Ewe", birthDaysAgo:1095, stageIdx:3, lastEventType:"shearing", lastEventDaysAgo:61, paddock:"Tosamaidan", photos:[] },
+  { id:"tv-1140", tag:"TV-1140", breed:"Long-tail Kashmiri", sex:"Ewe", birthDaysAgo:730, stageIdx:4, lastEventType:"mating", lastEventDaysAgo:14, paddock:"Doodhpathri", photos:[] },
+  { id:"tv-0309", tag:"TV-0309", breed:"Merino", sex:"Ram", birthDaysAgo:335, stageIdx:2, lastEventType:"weaning", lastEventDaysAgo:90, paddock:"Yusmarg", photos:[] },
+  { id:"tv-0677", tag:"TV-0677", breed:"Long-tail Kashmiri", sex:"Ewe", birthDaysAgo:210, stageIdx:1, lastEventType:"health", lastEventDaysAgo:2, paddock:"Yusmarg", photos:[], healthFlag:true },
+  { id:"tv-1203", tag:"TV-1203", breed:"Merino", sex:"Ewe", birthDaysAgo:6, stageIdx:0, lastEventType:"birth", lastEventDaysAgo:6, paddock:"Lambing Shed", photos:[] },
+  { id:"tv-0458", tag:"TV-0458", breed:"Long-tail Kashmiri", sex:"Ram", birthDaysAgo:1460, stageIdx:5, lastEventType:"exit", lastEventDaysAgo:20, paddock:"Holding Pen", photos:[] }
+];
+// Real Kashmir Himalaya grazing grounds — from the Pir Panjal range foothill
+// pastures down to the high-altitude margs grazed through the Kashmir valley's
+// transhumance cycle, plus the two base-camp facilities (lambing, holding) that
+// aren't highland pasture at all.
+var paddocks = ["Tosamaidan","Doodhpathri","Yusmarg","Gurez Valley","Sonamarg","Pahalgam — Baisaran","Lambing Shed","Holding Pen"];
+var handlers = ["Waseem A.","Field hand — Rayees","Field hand — Tariq","Vet — Dr. Nissar"];
+var members = ["Paras Hospital network","Kashmir Valley Growers Co.","Habib Family Farm","Open — any onboarded member"];
+var fleeceTable = { "Merino":[2.8,3.6], "Long-tail Kashmiri":[1.9,2.6] };
+var weightTable = {
+  "Merino":        { 0:[3,5], 1:[16,22], 2:[28,40], 3:[40,55], 4:[45,60], 5:[50,65] },
+  "Long-tail Kashmiri": { 0:[2.5,4.5], 1:[14,19], 2:[24,34], 3:[34,46], 4:[38,52], 5:[42,56] }
+};
+var priceTable = { "Merino":[280,340], "Long-tail Kashmiri":[300,380] }; // illustrative, currency units per kg
+
+/* ---------------------------------------------------------------------- *
+ * SEEDED HISTORY — every sheep gets a short, deterministic reading
+ * history (same numbers on every load — a seeded PRNG, never Math.random
+ * or Date.now(), so the predictions below are reproducible demo data,
+ * not a different story each refresh). This is what the math in the
+ * TEMPLATES below actually runs on: weighHistory / fleeceHistory are
+ * stand-ins for the real Event rows a production system would read.
+ * ---------------------------------------------------------------------- */
+function hashStr(s){ var h=0; for (var i=0;i<s.length;i++){ h=(h<<5)-h+s.charCodeAt(i); h|=0; } return Math.abs(h); }
+function mulberry32(seed){
+  return function(){
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    var t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+function round1(n){ return Math.round(n*10)/10; }
+function generateReadingHistory(seedStr, baseline, n, trendPct){
+  var rng = mulberry32(hashStr(seedStr));
+  var start = baseline * (1 - trendPct);
+  var out = [];
+  for (var i=0;i<n;i++){
+    var t = i/(n-1||1);
+    var v = start + (baseline-start)*t + (rng()-0.5)*(baseline*0.06);
+    out.push(round1(Math.max(0.1,v)));
+  }
+  return out;
+}
+function seedHistory(s){
+  var wRange = (weightTable[s.breed]||weightTable["Merino"])[s.stageIdx] || [20,30];
+  var wBaseline = wRange[0] + ((hashStr(s.tag)%100)/100)*(wRange[1]-wRange[0]);
+  // trend varies sheep to sheep — a health flag drags weight down, otherwise a mix of steady gainers and flatter trackers
+  var wTrend = s.healthFlag ? -0.09 : (hashStr(s.tag+"t")%3===0 ? 0.03 : 0.15);
+  s.weighHistory = generateReadingHistory(s.tag+"-w", wBaseline, 4, wTrend);
+  var fRange = fleeceTable[s.breed] || fleeceTable["Merino"];
+  var fBaseline = fRange[0] + ((hashStr(s.tag+"f")%100)/100)*(fRange[1]-fRange[0]);
+  // TV-0892 keeps the declining fleece trend already called out on the Cockpit page
+  var fTrend = s.tag === "TV-0892" ? -0.12 : 0.10;
+  s.fleeceHistory = generateReadingHistory(s.tag+"-f", fBaseline, 3, fTrend);
+}
+roster.forEach(seedHistory);
+
+/* ---------------------------------------------------------------------- *
+ * MATH — the actual statistics behind every "predict" field: trailing
+ * average, a least-squares trend line used to predict the next reading,
+ * an R²-based confidence score for that prediction, and a z-score to
+ * place a sheep against its cohort. Pure functions, no DOM.
+ * ---------------------------------------------------------------------- */
+function mean(arr){ return arr.reduce(function(a,b){return a+b;},0) / arr.length; }
+function stdDev(arr){ var m=mean(arr); return Math.sqrt(mean(arr.map(function(x){return (x-m)*(x-m);}))); }
+function trailingAverage(arr,n){ return mean(arr.slice(-n)); }
+function linearRegression(values){
+  var pts = values.map(function(v,i){ return {x:i,y:v}; });
+  var n=pts.length, sx=0,sy=0,sxy=0,sxx=0;
+  pts.forEach(function(p){ sx+=p.x; sy+=p.y; sxy+=p.x*p.y; sxx+=p.x*p.x; });
+  var denom = (n*sxx - sx*sx) || 1;
+  var slope = (n*sxy - sx*sy) / denom;
+  var intercept = (sy - slope*sx) / n;
+  return { slope:slope, intercept:intercept, predict:function(x){ return slope*x + intercept; }, points:pts };
+}
+function confidenceFromFit(reg){
+  var m = mean(reg.points.map(function(p){return p.y;}));
+  var ssTot = reg.points.reduce(function(s,p){ return s+(p.y-m)*(p.y-m); },0);
+  var ssRes = reg.points.reduce(function(s,p){ var pr=reg.predict(p.x); return s+(p.y-pr)*(p.y-pr); },0);
+  var r2 = ssTot===0 ? 1 : Math.max(0, 1 - ssRes/ssTot);
+  return Math.round(40 + r2*57); // floor at 40% so a thin history never reads as false certainty
+}
+function predictNext(history){
+  var reg = linearRegression(history);
+  var predicted = round1(reg.predict(history.length));
+  var confidence = confidenceFromFit(reg);
+  var trendPctPerReading = history[0] ? (reg.slope / history[0]) * 100 : 0;
+  return { predicted:predicted, confidence:confidence, trendPctPerReading:round1(trendPctPerReading), slope:reg.slope };
+}
+function cohortLatest(sheep, excludeId){
+  return roster.filter(function(r){ return r.id!==excludeId && r.breed===sheep.breed && r.stageIdx===sheep.stageIdx; })
+    .map(function(r){ return r.weighHistory[r.weighHistory.length-1]; });
+}
+function zScoreLabel(value, cohortValues){
+  if (!cohortValues.length) return "no cohort at this stage yet";
+  var m = mean(cohortValues), sd = stdDev(cohortValues) || 1;
+  var pct = Math.round(((value-m)/m)*100);
+  var dir = pct >= 0 ? "above" : "below";
+  return (pct===0?"in line with":Math.abs(pct)+"% "+dir) + " the " + cohortValues.length + "-sheep cohort average";
+}
+function healthEscalationRisk(s){
+  var flags = cohortHealthCount(s);
+  return Math.min(95, 12 + flags*36);
+}
+function sparkline(values){
+  var w=100,h=28,pad=3;
+  var min=Math.min.apply(null,values), max=Math.max.apply(null,values);
+  var range=(max-min)||1;
+  var step=(w-2*pad)/((values.length-1)||1);
+  var pts=values.map(function(v,i){ var x=pad+i*step, y=h-pad-((v-min)/range)*(h-2*pad); return [round1(x),round1(y)]; });
+  var up = values[values.length-1] >= values[0];
+  var color = up ? "var(--good)" : "var(--flag)";
+  var line = pts.map(function(p){ return p[0]+","+p[1]; }).join(" ");
+  var last = pts[pts.length-1];
+  return '<svg class="spark-svg" viewBox="0 0 '+w+' '+h+'" width="'+w+'" height="'+h+'" role="img" aria-label="trend"><polyline points="'+line+'" fill="none" stroke="'+color+'" stroke-width="1.75"/><circle cx="'+last[0]+'" cy="'+last[1]+'" r="2.4" fill="'+color+'"/></svg>';
+}
+/* confidence interval bar — the predicted value as a point inside its own
+ * margin of error, the margin itself derived from the prediction's own
+ * confidence score (low confidence -> wide band, high confidence -> tight) */
+function confidenceBand(predicted, confidencePct){
+  var margin = round1(predicted * ((100-confidencePct)/100) * 0.6) || Math.max(0.1, predicted*0.03);
+  var lo = round1(predicted-margin), hi = round1(predicted+margin);
+  var w=140,h=30,pad=10,trackY=16;
+  var domainLo = lo - margin*0.5, domainHi = hi + margin*0.5;
+  var scale = (w-2*pad) / ((domainHi-domainLo)||1);
+  function X(v){ return round1(pad + (v-domainLo)*scale); }
+  var bx1=X(lo), bx2=X(hi), px=X(predicted);
+  return '<svg viewBox="0 0 '+w+' '+h+'" width="'+w+'" height="'+h+'" role="img" aria-label="confidence interval '+lo+' to '+hi+'">'+
+    '<line x1="'+pad+'" y1="'+trackY+'" x2="'+(w-pad)+'" y2="'+trackY+'" stroke="var(--border-strong)" stroke-width="1.5"/>'+
+    '<rect x="'+bx1+'" y="'+(trackY-4)+'" width="'+Math.max(2,bx2-bx1)+'" height="8" rx="4" fill="var(--accent)" fill-opacity="0.22"/>'+
+    '<circle cx="'+px+'" cy="'+trackY+'" r="3.6" fill="var(--accent)"/>'+
+    '<text x="'+bx1+'" y="'+(trackY+13)+'" font-size="8" fill="var(--fg-faint)" text-anchor="middle">'+lo+'</text>'+
+    '<text x="'+bx2+'" y="'+(trackY+13)+'" font-size="8" fill="var(--fg-faint)" text-anchor="middle">'+hi+'</text>'+
+  '</svg>';
+}
+/* cohort position — every other sheep in the cohort as a small dot on a
+ * number line, this sheep's own reading as the one highlighted dot */
+function cohortDotStrip(cohortValues, highlightValue){
+  if (!cohortValues.length) return null;
+  var all = cohortValues.concat([highlightValue]);
+  var min = Math.min.apply(null, all), max = Math.max.apply(null, all);
+  var range = (max-min) || 1, w=140,h=24,pad=10;
+  function X(v){ return round1(pad + ((v-min)/range)*(w-2*pad)); }
+  var dots = cohortValues.map(function(v){ return '<circle cx="'+X(v)+'" cy="14" r="2.3" fill="var(--fg-faint)" fill-opacity="0.65"/>'; }).join("");
+  var hl = '<circle cx="'+X(highlightValue)+'" cy="14" r="4" fill="var(--accent)" stroke="var(--surface)" stroke-width="1.4"/>';
+  return '<svg viewBox="0 0 '+w+' '+h+'" width="'+w+'" height="'+h+'" role="img" aria-label="cohort distribution">'+
+    '<line x1="'+pad+'" y1="14" x2="'+(w-pad)+'" y2="14" stroke="var(--border)" stroke-width="1"/>'+dots+hl+'</svg>';
+}
+
+/* ---------------------------------------------------------------------- *
+ * FORMULAS — pure functions, exactly as specced in the developer guide.
+ * Every one takes the sheep record (+ event history) and returns a value;
+ * none of them touch the DOM or mutate state.
+ * ---------------------------------------------------------------------- */
+function ageMonths(s){ return Math.round(s.birthDaysAgo / 30.44); }
+function ageLabel(s){
+  var m = ageMonths(s);
+  return m < 1 ? s.birthDaysAgo + " days" : m < 24 ? m + " mo" : (m/12).toFixed(1) + " yr";
+}
+function daysSinceEvent(s, type){ return s.lastEventType === type ? s.lastEventDaysAgo : null; }
+function expectedWeightRange(breed, stageIdx){
+  var t = (weightTable[breed] || weightTable["Merino"])[stageIdx] || [0,0];
+  return "~" + t[0] + "–" + t[1] + " kg";
+}
+function expectedFleeceRange(breed){
+  var t = fleeceTable[breed] || fleeceTable["Merino"];
+  return "~" + t[0] + "–" + t[1] + " kg";
+}
+function gestationWindow(matingDateStr){
+  var d = new Date(matingDateStr);
+  var low = new Date(d.getTime() + (147-3)*864e5);
+  var high = new Date(d.getTime() + (147+3)*864e5);
+  var fmt = function(x){ return x.toISOString().slice(0,10); };
+  return fmt(low) + " – " + fmt(high);
+}
+function nextTag(extraTags){
+  var max = 0;
+  roster.concat(extraTags || []).forEach(function(s){
+    var m = /TV-(\d+)/.exec(s.tag); if (m) max = Math.max(max, parseInt(m[1],10));
+  });
+  return "TV-" + String(max+1).padStart(4,"0");
+}
+function cohortHealthCount(s){
+  // demo stand-in for: flags of the same symptom, same paddock, within 72h
+  return roster.filter(function(r){ return r.paddock === s.paddock && r.healthFlag; }).length;
+}
+
+/* ---------------------------------------------------------------------- *
+ * TEMPLATES — one entry per event type. `source` on every field is what
+ * the legend bar and the field badges are reading: 'lookup' | 'formula' |
+ * 'sticky' | 'input'. This object is the entire spec for what Section 4
+ * of the developer guide calls the scenario table — it is not duplicated
+ * anywhere else in this file.
+ * ---------------------------------------------------------------------- */
+var TEMPLATES = {
+  weigh: {
+    label: "Weigh-in",
+    fields: function(s){
+      var hist = s.weighHistory;
+      var pred = predictNext(hist);
+      var cohort = cohortLatest(s, s.id).map(function(h){ return h; });
+      return [
+        lookupField("breed","Breed", s.breed),
+        lookupField("sex","Sex", s.sex),
+        lookupField("stage","Current stage", STAGES[s.stageIdx]),
+        formulaField("trailing","Trailing average (last 3)", round1(trailingAverage(hist,3))+" kg", sparkline(hist)),
+        formulaField("predicted","Predicted next weigh-in", pred.predicted+" kg · "+pred.confidence+"% confidence", confidenceBand(pred.predicted,pred.confidence), pred.trendPctPerReading),
+        formulaField("vscohort","vs. cohort at this stage", zScoreLabel(hist[hist.length-1], cohort), cohortDotStrip(cohort, hist[hist.length-1])),
+        stickyPaddock(), stickyHandler(), stickyDate(),
+        inputField("weight","Weight (kg)","number",true)
+      ];
+    },
+    onSave: ["New weigh-in event appended to this sheep's history.","Trend line and cohort average recomputed from the new reading."]
+  },
+  weaning: {
+    label: "Weaning",
+    fields: function(s){ return [
+      lookupField("breed","Breed", s.breed),
+      lookupField("sex","Sex", s.sex),
+      lookupField("age","Age", ageLabel(s)),
+      formulaField("expected","Expected weaning weight", expectedWeightRange(s.breed, 1)),
+      stickyPaddock(), stickyHandler(), stickyDate(),
+      inputField("weight","Weaning weight (kg)","number",true)
+    ];},
+    onSave: ["Stage advances: Birth & Lambing → Growth & Grazing (weaning is logged as the transition event — there's no separate “growth” form to fill, it's just time on pasture).","Shearing unlocks immediately after this save."]
+  },
+  shearing: {
+    label: "Shearing",
+    fields: function(s){
+      var hist = s.fleeceHistory;
+      var pred = predictNext(hist);
+      return [
+        lookupField("breed","Breed", s.breed),
+        lookupField("paddock0","Current paddock", s.paddock),
+        formulaField("days","Days since last shearing", s.lastEventType==="shearing" ? s.lastEventDaysAgo+" days" : "no prior record"),
+        formulaField("trailing","Trailing fleece average (last "+hist.length+")", round1(trailingAverage(hist,3))+" kg", sparkline(hist)),
+        formulaField("predicted","Predicted fleece weight", pred.predicted+" kg · "+pred.confidence+"% confidence", confidenceBand(pred.predicted,pred.confidence), pred.trendPctPerReading),
+        stickyPaddock(), stickyHandler(), stickyDate(),
+        inputField("fleece","Fleece weight (kg)","number",true)
+      ];
+    },
+    onSave: ["New shearing event appended.","Fleece-yield prediction recomputed against this reading.","Cascade signal moves Predict → Confirm if the reading is within 10% of the predicted value."]
+  },
+  mating: {
+    label: "Mating logged",
+    fields: function(s){
+      var mates = roster.filter(function(r){ return r.sex !== s.sex && r.id !== s.id; });
+      return [
+        lookupField("breed","Breed", s.breed),
+        lookupField("stage","Current stage", STAGES[s.stageIdx]),
+        formulaField("eligible","Eligible mates found", mates.length + " in the roster (opposite sex, breeding-eligible)"),
+        { key:"mate", label:"Mate", source:"input", type:"select", required:true,
+          options:[""].concat(mates.map(function(m){ return m.tag + " — " + m.breed; })) },
+        stickyPaddock(), stickyHandler(), stickyDate()
+      ];
+    },
+    onSave: ["New mating event appended.","Due-date window computed from gestation length and written to the record — never typed."]
+  },
+  health: {
+    label: "Health event",
+    fields: function(s){
+      var flags = cohortHealthCount(s);
+      var risk = healthEscalationRisk(s);
+      return [
+        lookupField("breed","Breed", s.breed),
+        lookupField("paddock0","Paddock", s.paddock),
+        formulaField("cohort","Cohort pattern check", flags + " other flag(s) in this paddock right now"),
+        formulaField("risk","Escalation risk", risk + "% — risk = 12% base + 36% per matching flag in this paddock"),
+        { key:"symptom", label:"Symptom", source:"input", type:"select", required:true,
+          options:["","Lameness","Scouring","Coughing","Eye infection","Loss of appetite","Other"] },
+        { key:"severity", label:"Severity", source:"input", type:"select", required:true, options:["Mild","Moderate","Severe"] },
+        stickyPaddock(), stickyHandler(), stickyDate()
+      ];
+    },
+    onSave: ["Health flag raised; cascade signal set to Flag.","If 2+ similar flags turn up in the same paddock inside 72h, signal escalates straight to Confirm."]
+  },
+  paddock: {
+    label: "Moved paddock",
+    fields: function(s){ return [
+      lookupField("from","Current paddock (from)", s.paddock),
+      { key:"to", label:"Move to", source:"input", type:"select", required:true,
+        options:[""].concat(paddocks.filter(function(p){ return p!==s.paddock; })) },
+      stickyHandler(), stickyDate()
+    ];},
+    onSave: ["Paddock field on the sheep's record updated.","Next check-in's “carried” paddock default follows it."]
+  },
+  exit: {
+    label: "Sold / exit",
+    fields: function(s){
+      var pred = predictNext(s.weighHistory);
+      var rate = priceTable[s.breed] || priceTable["Merino"];
+      var lo = Math.round(pred.predicted*rate[0]), hi = Math.round(pred.predicted*rate[1]);
+      return [
+        lookupField("breed","Breed", s.breed),
+        lookupField("age","Age", ageLabel(s)),
+        formulaField("eligible","Exit eligibility", s.healthFlag ? "Blocked — open health flag" : "Clear — record complete, no open flags"),
+        formulaField("estvalue","Suggested value range", lo+"–"+hi+" (illustrative) · predicted "+pred.predicted+" kg × per-kg trend"),
+        { key:"buyer", label:"Buyer (onboarded member)", source:"input", type:"select", required:true, options:[""].concat(members) },
+        { key:"price", label:"Sale price", source:"input", type:"number", required:true },
+        stickyDate()
+      ];
+    },
+    onSave: ["Stage set to Sale / Exit; record closed to further field events.","Any open marketplace listing for this sheep closes automatically."]
+  }
+};
+
+function lookupField(key,label,val){ return { key:key, label:label, source:"lookup", type:"static", value:val }; }
+function formulaField(key,label,val,chart,trendPct){ return { key:key, label:label, source:"formula", type:"static", value:val, chart:chart, trendPct:trendPct }; }
+function inputField(key,label,type,required){ return { key:key, label:label, source:"input", type:type, required:!!required }; }
+function stickyPaddock(){ return { key:"paddock", label:"Paddock", source:"sticky", type:"select", options:paddocks }; }
+function stickyHandler(){ return { key:"handler", label:"Handler", source:"sticky", type:"select", options:handlers }; }
+function stickyDate(){ return { key:"date", label:"Date", source:"sticky", type:"date" }; }
+
+/* ---------------------------------------------------------------------- *
+ * RESOLVE ENGINE — the one function the UI actually calls. Pure: no DOM,
+ * no network, safe to re-run on every keystroke in the search box.
+ * ---------------------------------------------------------------------- */
+function resolveTemplate(sheep, eventType){
+  var tpl = TEMPLATES[eventType];
+  if (!tpl || !sheep) return null;
+  return { label: tpl.label, fields: tpl.fields(sheep), onSave: tpl.onSave };
+}
+
+/* ======================= STATE ========================================= */
+var state = {
+  mode: "existing",
+  selectedSheep: null,
+  eventType: "",
+  logged: [],
+  lastUsed: { paddock: "Tosamaidan", handler: "Waseem A." },
+  twinPhotos: {},         // sheepId|'new' -> [dataURL, dataURL, dataURL]
+  justUnlocked: []        // event key(s) that unlocked on the last save — one-shot pulse, cleared after render
+};
+var today = new Date().toISOString().slice(0,10);
+
+/* ======================= RENDER: lifecycle cycle ======================= */
+function renderCycle(activeStageIdx, healthFlag){
+  var svg = document.getElementById("cycleSvg");
+  var cx = 110, cy = 110, r = 78;
+  var n = STAGES.length;
+  var parts = [];
+  for (var i=0;i<n;i++){
+    var a = (Math.PI*2*i/n) - Math.PI/2;
+    var x = cx + r*Math.cos(a), y = cy + r*Math.sin(a);
+    var a2 = (Math.PI*2*((i+1)%n)/n) - Math.PI/2;
+    var x2 = cx + r*Math.cos(a2), y2 = cy + r*Math.sin(a2);
+    var active = i === activeStageIdx;
+    var done = activeStageIdx !== null && i < activeStageIdx;
+    var col = active ? "var(--accent)" : done ? "var(--good)" : "var(--border-strong)";
+    parts.push('<line x1="'+x+'" y1="'+y+'" x2="'+x2+'" y2="'+y2+'" stroke="'+(active||done?col:"var(--border)")+'" stroke-width="2"/>');
+  }
+  for (var j=0;j<n;j++){
+    var aa = (Math.PI*2*j/n) - Math.PI/2;
+    var xx = cx + r*Math.cos(aa), yy = cy + r*Math.sin(aa);
+    var isActive = j === activeStageIdx;
+    var isDone = activeStageIdx !== null && j < activeStageIdx;
+    var fill = isActive ? "var(--accent)" : isDone ? "var(--good)" : "var(--surface)";
+    var stroke = isActive ? "var(--accent)" : isDone ? "var(--good)" : "var(--border-strong)";
+    var tcol = (isActive||isDone) ? (isActive ? "var(--accent-ink)" : "var(--good-ink)") : "var(--fg-faint)";
+    parts.push('<circle cx="'+xx+'" cy="'+yy+'" r="13" fill="'+fill+'" stroke="'+stroke+'" stroke-width="2"/>');
+    parts.push('<text x="'+xx+'" y="'+(yy+4)+'" text-anchor="middle" font-size="10" font-weight="700" fill="'+tcol+'">'+(j+1)+'</text>');
+    var lx = cx + (r+28)*Math.cos(aa), ly = cy + (r+28)*Math.sin(aa);
+    parts.push('<text x="'+lx+'" y="'+(ly+3)+'" text-anchor="middle" font-size="8.5" fill="var(--fg-faint)">'+wrapWords(STAGES[j])+'</text>');
+  }
+  parts.push('<circle cx="'+cx+'" cy="'+cy+'" r="30" fill="var(--surface-sunk)"/>');
+  parts.push('<text x="'+cx+'" y="'+(cy-3)+'" text-anchor="middle" font-size="9" fill="var(--fg-faint)">stage</text>');
+  parts.push('<text x="'+cx+'" y="'+(cy+11)+'" text-anchor="middle" font-size="13" font-weight="700" fill="var(--fg)">'+(activeStageIdx===null?"—":(activeStageIdx+1)+"/"+n)+'</text>');
+  if (healthFlag){
+    parts.push('<circle cx="'+(cx+r*0.7)+'" cy="'+(cy+r*0.7)+'" r="6" fill="var(--flag)"/>');
+  }
+  svg.innerHTML = parts.join("");
+  var cap = document.getElementById("cycleCaption");
+  cap.textContent = activeStageIdx===null ? "Select a sheep to see where it sits in the cycle." :
+    "Currently at " + STAGES[activeStageIdx] + (healthFlag ? " — health event branched off this stage." : ".");
+}
+function wrapWords(s){ return s.length>11 ? s.slice(0,10)+"…" : s; }
+
+/* ======================= RENDER: roster ================================ */
+function renderRoster(){
+  var list = document.getElementById("rosterMini");
+  list.innerHTML = "";
+  roster.forEach(function(s){
+    var row = document.createElement("button");
+    row.type = "button"; row.className = "roster-row";
+    row.setAttribute("aria-current", state.selectedSheep && state.selectedSheep.id===s.id ? "true":"false");
+    var dotColor = s.healthFlag ? "var(--flag)" : "var(--good)";
+    row.innerHTML = '<span class="d" style="background:'+dotColor+'"></span><span class="t">'+s.tag+'</span>';
+    row.addEventListener("click", function(){ pickSheep(s); });
+    list.appendChild(row);
+  });
+}
+function pickSheep(s){
+  state.selectedSheep = s;
+  state.eventType = "";
+  document.getElementById("sheepSearch").value = s.tag + " — " + s.breed;
+  document.getElementById("sheepOptions").setAttribute("data-open","false");
+  renderAll();
+}
+
+/* ======================= CASCADE GATING ================================= */
+// The event picker mirrors the life-cycle diagram instead of listing all 7
+// event types flat: lifecycle events only unlock once the sheep has reached
+// the stage they belong to (a cascade, same word already used in the "on
+// save" panel), while weigh/health/paddock are maintenance events that are
+// always available. This is the single source of truth both the picker and
+// the "closed record" banner read from.
+var LIFECYCLE_EVENTS = ["weaning","shearing","mating","exit"];
+var ANYTIME_EVENTS = ["weigh","health","paddock"];
+// Growth & Grazing (stageIdx 2) is deliberately skipped by every pill above —
+// it's time on pasture, not a thing anyone logs — so this is the one place
+// that explains, in plain language, where the sheep actually is and what
+// just unlocked because of it.
+function stageHint(s){
+  switch(s.stageIdx){
+    case 0: return "At Birth & Lambing — log Weaning when it happens.";
+    case 1: return "At Weaning.";
+    case 2: return "Weaned and in Growth & Grazing — that stage is automatic, no form for it. Shearing is unlocked.";
+    case 3: return "Sheared at least once — Mating is now unlocked.";
+    case 4: return "In Breeding — Sale / Exit is available whenever you're ready.";
+    default: return "";
+  }
+}
+function eventGate(s, key){
+  if (s.stageIdx === 5) return { status:"closed" };
+  switch(key){
+    case "weigh": case "health": case "paddock":
+      return { status:"available" };
+    case "weaning":
+      return s.stageIdx === 0 ? { status:"available" } : { status:"done", note:"Already weaned" };
+    case "shearing":
+      return s.stageIdx >= 2 ? { status:"available" } : { status:"locked", note:"Unlocks at Growth & Grazing" };
+    case "mating":
+      return s.stageIdx >= 3 ? { status:"available" } : { status:"locked", note:"Unlocks after Shearing" };
+    case "exit":
+      return s.stageIdx >= 1 ? { status:"available" } : { status:"locked", note:"Unlocks after Weaning" };
+    default:
+      return { status:"available" };
+  }
+}
+function renderEventPicker(s){
+  function pill(key){
+    var tpl = TEMPLATES[key];
+    var g = eventGate(s, key);
+    var icon = g.status==="done" ? '<span class="ep-icon" style="color:var(--good)">✓</span>'
+      : g.status==="locked" ? '<span class="ep-icon" style="color:var(--fg-faint)">🔒</span>'
+      : '<span class="ep-icon" style="color:var(--accent)">●</span>';
+    var disabled = (g.status==="locked" || g.status==="done") ? "disabled" : "";
+    var pressed = state.eventType===key ? "true" : "false";
+    var note = g.note ? '<span class="ep-note">'+g.note+'</span>' : "";
+    var justUnlocked = state.justUnlocked.indexOf(key)>-1 ? " ep-unlocked-flash" : "";
+    return '<button type="button" class="ep-pill'+(g.status==="done"?" ep-done":"")+justUnlocked+'" data-event="'+key+'" '+disabled+' aria-pressed="'+pressed+'" title="'+(g.note||tpl.label)+'">'+
+      icon+'<span class="ep-body"><span class="ep-label">'+tpl.label+'</span>'+note+'</span></button>';
+  }
+  if (s.stageIdx === 5){
+    return '<div class="ep-closed-note">🔒 <span><b>'+s.tag+'</b>’s record is closed — sold / exited. No further field events can be logged.</span></div>';
+  }
+  var html = '<div class="event-picker">';
+  html += '<div class="ep-group"><div class="ep-group-label">Lifecycle — in order<span class="ep-rule"></span></div><div class="ep-grid">'+
+    LIFECYCLE_EVENTS.map(pill).join("")+'</div></div>';
+  html += '<div class="ep-group"><div class="ep-group-label">Anytime<span class="ep-rule"></span></div><div class="ep-grid">'+
+    ANYTIME_EVENTS.map(pill).join("")+'</div></div>';
+  html += '</div>';
+  state.justUnlocked = []; // one-shot: consumed into this HTML string, clear so it doesn't replay on the next re-render
+  return html;
+}
+
+/* ======================= RENDER: template card ========================= */
+function renderTemplate(){
+  var card = document.getElementById("tplCard");
+  var s = state.selectedSheep;
+  if (!s){
+    card.innerHTML = '<div class="empty-select">Pick a sheep from the roster — its template appears here, fields already filled from its record.</div>';
+    return;
+  }
+  var closed = s.stageIdx === 5;
+
+  var html = '';
+  html += '<div class="tpl-head"><div><div class="name">'+s.tag+'</div><div class="sub">'+s.breed+' · '+s.sex+' · '+ageLabel(s)+'</div></div>'+
+    '<button class="btn" type="button" id="exitSheep" title="Leave this sheep and go back to search">Exit to search</button></div>';
+  if (!closed) html += '<div class="ep-hint"><b>'+s.tag+'</b> — '+stageHint(s)+'</div>';
+  html += '<div id="eventPicker">'+renderEventPicker(s)+'</div>';
+  html += '<div id="tplFields"></div>';
+  if (!closed){
+    html += '<div class="twin-row"><div class="twin-head"><span class="pane-title">Digital twin</span><span class="hint">optional — add now or later</span></div><div class="twin-slots" id="twinSlots"></div></div>';
+    html += '<div class="actions-row"><button class="btn" type="button" id="clearFields">Clear fields</button><button class="btn btn-primary" type="button" id="saveExisting" disabled>Save entry</button></div>';
+  }
+  card.innerHTML = html;
+
+  if (!closed){
+    Array.prototype.forEach.call(card.querySelectorAll(".ep-pill"), function(btn){
+      btn.addEventListener("click", function(){
+        if (btn.disabled) return;
+        state.eventType = btn.dataset.event;
+        renderAll();
+      });
+    });
+    document.getElementById("clearFields").addEventListener("click", function(){
+      renderFields(); // re-render current event's fields, discarding typed values — sheep & event stay put
+    });
+    document.getElementById("saveExisting").addEventListener("click", saveExisting);
+  }
+
+  // "Exit to search" is the ONLY way this sheep gets deselected — saving keeps
+  // you right here (a pipe), so staff can log several events in a row without
+  // the screen bouncing back to the roster after every single entry.
+  document.getElementById("exitSheep").addEventListener("click", function(){
+    state.selectedSheep = null; state.eventType = "";
+    document.getElementById("sheepSearch").value = "";
+    renderAll();
+    document.getElementById("sheepSearch").focus();
+  });
+
+  if (!closed){
+    renderFields();
+    renderTwinSlots("twinSlots", s.id);
+  } else {
+    renderEffects(null);
+  }
+}
+
+function renderFields(){
+  var wrap = document.getElementById("tplFields");
+  if (!wrap) return;
+  var s = state.selectedSheep;
+  var resolved = state.eventType ? resolveTemplate(s, state.eventType) : null;
+  if (!resolved){ wrap.innerHTML = ""; updateSaveState(); renderEffects(null); return; }
+
+  var html = '<div class="grid2">';
+  resolved.fields.forEach(function(f){
+    var readonly = f.type === "static";
+    html += '<div class="field-wrap '+(readonly?'readonly':'')+' src-'+f.source+'">';
+    html += '<div class="field-top"><label style="margin-bottom:0">'+f.label+'</label><span class="src-badge '+f.source+'">'+badgeWord(f.source)+'</span></div>';
+    if (readonly){
+      var trendTag = (f.trendPct!==undefined && f.trendPct!==null) ?
+        ' <span class="trend-tag" style="color:'+(f.trendPct>=0?"var(--good)":"var(--flag)")+'">'+(f.trendPct>=0?"▲":"▼")+' '+Math.abs(f.trendPct)+'%/reading</span>' : '';
+      html += '<div class="static-val">'+f.value+trendTag+(f.chart?('<div class="spark">'+f.chart+'</div>'):'')+'</div>';
+    } else if (f.type === "select"){
+      var def = f.key==="paddock" ? state.lastUsed.paddock : f.key==="handler" ? state.lastUsed.handler : "";
+      html += '<select data-field="'+f.key+'" '+(f.required?'required':'')+'>' + (f.options||[]).map(function(o){
+        var v = o===""?"":o;
+        return '<option value="'+v+'"'+(v===def?' selected':'')+'>'+(o===""?"Select…":o)+'</option>';
+      }).join("") + '</select>';
+    } else if (f.type === "date"){
+      html += '<input type="date" data-field="'+f.key+'" value="'+today+'">';
+    } else {
+      html += '<input type="'+f.type+'" data-field="'+f.key+'" '+(f.required?'required':'')+' placeholder="'+(f.type==='number'?'e.g. 42.3':'')+'">';
+    }
+    html += '</div>';
+  });
+  html += '</div>';
+  wrap.innerHTML = html;
+
+  Array.prototype.forEach.call(wrap.querySelectorAll("[data-field]"), function(el){
+    el.addEventListener("input", updateSaveState);
+    el.addEventListener("change", updateSaveState);
+  });
+  updateSaveState();
+  renderEffects(TEMPLATES[state.eventType]);
+}
+function badgeWord(src){ return {lookup:"auto",formula:"predict",sticky:"carried",input:"type"}[src] || src; }
+
+function updateSaveState(){
+  var btn = document.getElementById("saveExisting");
+  if (!btn) return;
+  var wrap = document.getElementById("tplFields");
+  var ok = !!state.eventType;
+  if (ok && wrap){
+    Array.prototype.forEach.call(wrap.querySelectorAll("[required]"), function(el){
+      if (!el.value) ok = false;
+    });
+  }
+  btn.disabled = !ok;
+}
+
+function renderEffects(tpl){
+  var card = document.getElementById("effectsCard");
+  if (!tpl){ card.innerHTML = '<div class="lead">Pick an event to see what fires on save.</div>'; return; }
+  var html = '<div class="lead">Saving a <b>'+tpl.label+'</b> event:</div><ul class="effects-list">';
+  tpl.onSave.forEach(function(line){ html += '<li>'+line+'</li>'; });
+  html += '</ul>';
+  card.innerHTML = html;
+}
+
+/* ======================= RENDER: digital twin slots ===================== */
+function renderTwinSlots(containerId, ownerKey){
+  var wrap = document.getElementById(containerId);
+  if (!wrap) return;
+  var photos = state.twinPhotos[ownerKey] || [null,null,null];
+  var labels = ["Photo 1 — e.g. side profile","Photo 2 — e.g. face / tag","Photo 3 — optional"];
+  wrap.innerHTML = "";
+  for (var i=0;i<3;i++){
+    (function(i){
+      var slot = document.createElement("div");
+      slot.className = "twin-slot";
+      if (photos[i]){
+        slot.innerHTML = '<img src="'+photos[i]+'" alt="Sheep photo '+(i+1)+'"><button type="button" class="rm">×</button>';
+        slot.querySelector(".rm").addEventListener("click", function(ev){
+          ev.preventDefault(); ev.stopPropagation();
+          photos[i] = null; state.twinPhotos[ownerKey] = photos; renderTwinSlots(containerId, ownerKey);
+        });
+      } else {
+        slot.innerHTML = '<span class="lbl">'+labels[i]+'</span><input type="file" accept="image/*">';
+        slot.querySelector("input").addEventListener("change", function(ev){
+          var file = ev.target.files[0]; if (!file) return;
+          var reader = new FileReader();
+          reader.onload = function(){ photos[i] = reader.result; state.twinPhotos[ownerKey] = photos; renderTwinSlots(containerId, ownerKey); };
+          reader.readAsDataURL(file);
+        });
+      }
+      wrap.appendChild(slot);
+    })(i);
+  }
+}
+
+/* ======================= SAVE: existing-sheep flow ====================== */
+// Two-step on purpose: gather + describe what's about to change (saveExisting),
+// let a person confirm the actual value against a plain-language summary, THEN
+// write it to the sheep's record (commitSave). Nothing is persisted until
+// confirmed, and the sheep stays selected throughout — the screen never
+// bounces back to the roster unless "Exit to search" is clicked.
+function saveExisting(){
+  var s = state.selectedSheep;
+  var tpl = TEMPLATES[state.eventType];
+  if (!s || !tpl) return;
+  var wrap = document.getElementById("tplFields");
+  var vals = {};
+  Array.prototype.forEach.call(wrap.querySelectorAll("[data-field]"), function(el){ vals[el.dataset.field] = el.value; });
+
+  var missing = [];
+  Array.prototype.forEach.call(wrap.querySelectorAll("[required]"), function(el){ if (!el.value) missing.push(el); });
+  if (missing.length){ missing[0].focus(); return; }
+
+  var d = describeSave(s, state.eventType, vals);
+  openConfirm(d.title, d.summary, function(){ commitSave(s, state.eventType, tpl, vals, d.toast); });
+}
+
+// Builds the human-readable confirmation copy AND the post-save toast text —
+// one source of truth so "are you sure you want to save 42.3kg" and "saved
+// 42.3kg" always agree with each other and with what actually gets written.
+function describeSave(s, eventType, vals){
+  var paddockBit = vals.paddock ? " at <b>"+vals.paddock+"</b>" : "";
+  switch(eventType){
+    case "weigh":
+      return {
+        title: "Log " + vals.weight + " kg for " + s.tag + "?",
+        summary: "This appends a new weigh-in of <b>"+vals.weight+" kg</b> to "+s.tag+"'s history"+paddockBit+". The trailing average and predicted-next figures recompute immediately from it.",
+        toast: "Saved — "+s.tag+" weighed in at "+vals.weight+" kg"
+      };
+    case "weaning":
+      return {
+        title: "Log weaning for " + s.tag + "?",
+        summary: "This records a weaning weight of <b>"+vals.weight+" kg</b> and moves "+s.tag+" straight into <b>Growth & Grazing</b> — that stage has no form of its own, it's just time on pasture until Shearing. Shearing unlocks right after this save.",
+        toast: "Saved — "+s.tag+" weaned at "+vals.weight+" kg, now in Growth & Grazing"
+      };
+    case "shearing":
+      return {
+        title: "Log " + vals.fleece + " kg fleece for " + s.tag + "?",
+        summary: "This appends a fleece weight of <b>"+vals.fleece+" kg</b> to "+s.tag+"'s shearing history"+paddockBit+".",
+        toast: "Saved — "+s.tag+" sheared, "+vals.fleece+" kg fleece"
+      };
+    case "mating":
+      return {
+        title: "Log mating for " + s.tag + "?",
+        summary: "This records a mating between <b>"+s.tag+"</b> and <b>"+(vals.mate||"—")+"</b>, and moves "+s.tag+" into the Breeding stage.",
+        toast: "Saved — "+s.tag+" × "+(vals.mate||"—")+" mating logged"
+      };
+    case "health":
+      return {
+        title: "Raise a health flag on " + s.tag + "?",
+        summary: "This raises a <b>"+(vals.severity||"")+"</b> health flag on "+s.tag+" for <b>"+(vals.symptom||"—")+"</b>. It will show on the roster and feed into escalation-risk scoring for the rest of the paddock.",
+        toast: "Saved — health flag raised on "+s.tag+" ("+(vals.symptom||"—")+")"
+      };
+    case "paddock":
+      return {
+        title: "Move " + s.tag + "?",
+        summary: "This moves "+s.tag+" from <b>"+s.paddock+"</b> to <b>"+(vals.to||"—")+"</b>. It becomes the new default paddock for this sheep's next check-in.",
+        toast: "Saved — "+s.tag+" moved to "+(vals.to||"—")
+      };
+    case "exit":
+      return {
+        title: "Close out " + s.tag + "?",
+        summary: "This records a sale to <b>"+(vals.buyer||"—")+"</b> at <b>"+(vals.price||"—")+"</b> and sets "+s.tag+" to Sale / Exit, closing its record to further field events.",
+        toast: "Saved — "+s.tag+" exited, sold to "+(vals.buyer||"—")
+      };
+    default:
+      return { title:"Save this entry?", summary:"Save this event for "+s.tag+"?", toast:"Saved — "+s.tag };
+  }
+}
+
+// The only place sheep records actually get mutated on an existing-sheep
+// save. Each event type writes to the specific fields its template claims
+// (in the "on save" panel) it will touch — so the math layer (trailing
+// average, predicted-next, cohort z-score) is reading real updated history
+// the very next time this sheep's template is opened, not stale seed data.
+function commitSave(s, eventType, tpl, vals, toastMsg){
+  if (vals.paddock) state.lastUsed.paddock = vals.paddock;
+  if (vals.handler) state.lastUsed.handler = vals.handler;
+  if (vals.paddock) s.paddock = vals.paddock;
+  var prevStage = s.stageIdx;
+
+  switch(eventType){
+    case "weigh":
+      s.weighHistory.push(round1(parseFloat(vals.weight)));
+      break;
+    case "weaning":
+      s.weighHistory.push(round1(parseFloat(vals.weight)));
+      // Growth & Grazing has no event of its own — it's just time on pasture
+      // between Weaning and Shearing — so logging the weaning event is what
+      // carries the sheep straight into that stage. Stopping at stageIdx=1
+      // (Weaning) here was the bug: Shearing's gate needs stageIdx>=2, and
+      // nothing else ever bumped it there, so Shearing stayed locked forever.
+      s.stageIdx = Math.max(s.stageIdx, 2);
+      break;
+    case "shearing":
+      s.fleeceHistory.push(round1(parseFloat(vals.fleece)));
+      s.stageIdx = Math.max(s.stageIdx, 3);
+      break;
+    case "mating":
+      s.stageIdx = Math.max(s.stageIdx, 4);
+      s.lastMate = vals.mate;
+      break;
+    case "health":
+      s.healthFlag = true;
+      s.lastSymptom = vals.symptom; s.lastSeverity = vals.severity;
+      break;
+    case "paddock":
+      s.paddock = vals.to;
+      break;
+    case "exit":
+      s.stageIdx = 5;
+      s.exitPrice = vals.price; s.exitBuyer = vals.buyer;
+      break;
+  }
+  s.lastEventType = eventType;
+  s.lastEventDaysAgo = 0;
+
+  var detail = Object.keys(vals).filter(function(k){ return k!=="paddock" && k!=="handler" && k!=="date"; })
+    .map(function(k){ return vals[k]; }).filter(Boolean).join(" · ") || "—";
+  state.logged.unshift({ tag:s.tag, kind:"existing", type:tpl.label, detail:detail, date:vals.date||today, hasPhotos:(state.twinPhotos[s.id]||[]).some(Boolean) });
+
+  buildFeedPool(); // flock-wide feed & stats now reflect this sheep's real new numbers
+  closeConfirm();
+  showToast(toastMsg);
+
+  // Stays on the SAME sheep — this is the pipe. Only the event picker resets,
+  // so the next action is a deliberate choice, not an accidental re-submit.
+  state.eventType = "";
+  var stageAdvanced = s.stageIdx !== prevStage;
+  if (stageAdvanced){
+    // Which lifecycle pill(s) just flipped from locked to available — a
+    // single save can cross more than one threshold at once (e.g. weaning
+    // clears both Shearing's and Exit's gates in one jump), so every pill
+    // that unlocked gets the pulse, not just the first one found.
+    state.justUnlocked = LIFECYCLE_EVENTS.filter(function(k){
+      var before = eventGate({stageIdx:prevStage}, k).status;
+      var after = eventGate(s, k).status;
+      return before==="locked" && after==="available";
+    });
+  }
+  renderAll();
+  var card = document.getElementById("tplCard");
+  if (card){ card.classList.remove("just-saved"); void card.offsetWidth; card.classList.add("just-saved"); }
+  if (stageAdvanced){
+    var cycleCard = document.getElementById("cycleCard");
+    if (cycleCard){ cycleCard.classList.remove("just-advanced"); void cycleCard.offsetWidth; cycleCard.classList.add("just-advanced"); }
+  }
+}
+
+/* ======================= confirm-before-save modal ======================= */
+var _confirmOnOk = null;
+function openConfirm(title, summaryHtml, onConfirm){
+  document.getElementById("confirmTitle").textContent = title;
+  document.getElementById("confirmSummary").innerHTML = summaryHtml;
+  _confirmOnOk = onConfirm;
+  document.getElementById("confirmOverlay").hidden = false;
+  document.getElementById("confirmOk").focus();
+}
+function closeConfirm(){
+  document.getElementById("confirmOverlay").hidden = true;
+  _confirmOnOk = null;
+}
+document.getElementById("confirmCancel").addEventListener("click", closeConfirm);
+document.getElementById("confirmOverlay").addEventListener("click", function(e){ if (e.target.id==="confirmOverlay") closeConfirm(); });
+document.getElementById("confirmOk").addEventListener("click", function(){ if (_confirmOnOk) _confirmOnOk(); });
+document.addEventListener("keydown", function(e){
+  if (e.key==="Escape" && !document.getElementById("confirmOverlay").hidden) closeConfirm();
+});
+
+/* ======================= NEW-SHEEP template (always on) ================= */
+function renderNewTemplate(){
+  var card = document.getElementById("tplCard");
+  var nextT = nextTag(state.logged.filter(function(l){return l.kind==="new"||l.kind==="bulk";}).map(function(l){return {tag:l.tag};}));
+  var dams = roster.filter(function(r){ return r.sex==="Ewe"; }).map(function(r){ return r.tag; });
+  var sires = roster.filter(function(r){ return r.sex==="Ram"; }).map(function(r){ return r.tag; });
+  var html = '';
+  html += '<div class="tpl-head"><div><div class="name">New sheep</div><div class="sub">First entry — stage auto-set to Birth & Lambing</div></div><span class="badge-new">template: birth</span></div>';
+  html += '<div class="grid2">';
+  html += fieldBlock("input","tag","Tag ID","text",nextT,true);
+  html += selectBlock("input","breed","Breed",["Merino","Long-tail Kashmiri","Other / cross"]);
+  html += selectBlock("input","sex","Sex",["Ewe","Ram"]);
+  html += selectBlock("input","dam","Dam (mother)",[""].concat(dams),"Unknown");
+  html += selectBlock("input","sire","Sire (father)",[""].concat(sires),"Unknown");
+  html += '<div class="field-wrap src-input"><div class="field-top"><label style="margin-bottom:0">Birth date</label><span class="src-badge input">type</span></div><input type="date" data-nfield="birthDate" value="'+today+'"></div>';
+  html += selectBlockSticky("paddock","Paddock",paddocks,state.lastUsed.paddock);
+  html += selectBlockSticky("handler","Handler",handlers,state.lastUsed.handler);
+  html += '</div>';
+  html += '<div class="twin-row"><div class="twin-head"><span class="pane-title">Digital twin</span><span class="hint">optional — add now or later</span></div><div class="twin-slots" id="twinSlotsNew"></div></div>';
+  html += '<div class="actions-row"><button class="btn" type="button" id="resetNew">Clear</button><button class="btn btn-primary" type="button" id="saveNew">Save &amp; add another</button></div>';
+  card.innerHTML = html;
+  renderTwinSlots("twinSlotsNew", "new");
+  document.getElementById("resetNew").addEventListener("click", renderNewTemplate);
+  document.getElementById("saveNew").addEventListener("click", saveNew);
+
+  var effCard = document.getElementById("effectsCard");
+  effCard.innerHTML = '<div class="lead">Saving a <b>new sheep</b>:</div><ul class="effects-list">'+
+    '<li>New sheep record created.</li>'+
+    '<li>Birth & Lambing event written as its first history row.</li>'+
+    '<li>Next tag number recalculated for the following entry.</li></ul>';
+}
+function fieldBlock(src,key,label,type,value,disabledLook){
+  return '<div class="field-wrap src-'+src+'"><div class="field-top"><label style="margin-bottom:0">'+label+'</label><span class="src-badge '+src+'">'+badgeWord(src)+'</span></div>'+
+    '<input type="'+type+'" data-nfield="'+key+'" value="'+(value||"")+'"></div>';
+}
+function selectBlock(src,key,label,options,placeholder){
+  var opts = options.map(function(o){ return '<option value="'+o+'">'+(o===""?(placeholder||"Select…"):o)+'</option>'; }).join("");
+  return '<div class="field-wrap src-'+src+'"><div class="field-top"><label style="margin-bottom:0">'+label+'</label><span class="src-badge '+src+'">'+badgeWord(src)+'</span></div>'+
+    '<select data-nfield="'+key+'">'+opts+'</select></div>';
+}
+function selectBlockSticky(key,label,options,def){
+  var opts = options.map(function(o){ return '<option value="'+o+'"'+(o===def?' selected':'')+'>'+o+'</option>'; }).join("");
+  return '<div class="field-wrap src-sticky"><div class="field-top"><label style="margin-bottom:0">'+label+'</label><span class="src-badge sticky">carried</span></div>'+
+    '<select data-nfield="'+key+'">'+opts+'</select></div>';
+}
+function saveNew(){
+  var card = document.getElementById("tplCard");
+  var vals = {};
+  Array.prototype.forEach.call(card.querySelectorAll("[data-nfield]"), function(el){ vals[el.dataset.nfield] = el.value; });
+  var tag = vals.tag || nextTag();
+  state.lastUsed.paddock = vals.paddock; state.lastUsed.handler = vals.handler;
+  var newSheep = { id:tag.toLowerCase(), tag:tag, breed:vals.breed, sex:vals.sex, birthDaysAgo:0, stageIdx:0, lastEventType:"birth", lastEventDaysAgo:0, paddock:vals.paddock, photos:[] };
+  seedHistory(newSheep);
+  roster.push(newSheep);
+  state.logged.unshift({ tag:tag, kind:"new", type:"Birth & Lambing", detail:vals.breed+" · "+vals.sex, date:vals.birthDate||today, hasPhotos:(state.twinPhotos["new"]||[]).some(Boolean) });
+  state.twinPhotos[tag.toLowerCase()] = state.twinPhotos["new"]; state.twinPhotos["new"] = null;
+  buildFeedPool();
+  renderLogs(); renderRoster(); renderFlockStats();
+  showToast("Saved " + tag + " — ready for the next one");
+  renderNewTemplate();
+}
+
+/* ======================= SEARCH combobox ================================ */
+function setupSearch(){
+  var input = document.getElementById("sheepSearch");
+  var box = document.getElementById("sheepOptions");
+  function render(q){
+    q = (q||"").toLowerCase();
+    var matches = roster.filter(function(s){ return !q || s.tag.toLowerCase().indexOf(q)>-1 || s.breed.toLowerCase().indexOf(q)>-1; });
+    box.innerHTML = "";
+    if (!matches.length){ box.setAttribute("data-open","false"); return; }
+    matches.forEach(function(s){
+      var opt = document.createElement("button");
+      opt.type="button"; opt.className="combo-opt";
+      opt.innerHTML = '<span class="t">'+s.tag+'</span><span class="s">'+s.breed+' · '+STAGES[s.stageIdx]+'</span>';
+      opt.addEventListener("click", function(){ pickSheep(s); });
+      box.appendChild(opt);
+    });
+    box.setAttribute("data-open","true");
+  }
+  input.addEventListener("focus", function(){ render(input.value); });
+  input.addEventListener("input", function(){ render(input.value); });
+  document.addEventListener("click", function(e){ if (!e.target.closest(".combo")) box.setAttribute("data-open","false"); });
+}
+
+/* ======================= LOG rendering =================================== */
+function renderLogs(){
+  document.getElementById("sessionCount").textContent = String(state.logged.length);
+  [["logList","logEmpty"],["logListBulk","logEmptyBulk"]].forEach(function(pair){
+    var list = document.getElementById(pair[0]);
+    var empty = document.getElementById(pair[1]);
+    if (!list) return;
+    list.innerHTML = "";
+    empty.style.display = state.logged.length ? "none" : "block";
+    state.logged.slice(0,30).forEach(function(e){
+      var row = document.createElement("div");
+      row.className = "log-row";
+      var badge = e.kind==="new" ? '<span class="badge-new">new</span>' : e.kind==="bulk" ? '<span class="badge-bulk">bulk</span>' : '';
+      row.innerHTML = '<div class="t"><span class="tag">'+e.tag+'</span>'+badge+'</div><div class="d">'+e.type+' · '+e.detail+(e.hasPhotos?' · 📷':'')+'</div>';
+      list.appendChild(row);
+    });
+  });
+}
+function showToast(msg){
+  var t = document.getElementById("toast");
+  t.textContent = msg; t.setAttribute("data-show","true");
+  clearTimeout(showToast._timer);
+  showToast._timer = setTimeout(function(){ t.setAttribute("data-show","false"); }, 2200);
+}
+
+/* ======================= MODE switching =================================== */
+document.getElementById("modeBar").addEventListener("click", function(e){
+  var btn = e.target.closest(".mode-btn"); if (!btn) return;
+  state.mode = btn.getAttribute("data-mode");
+  Array.prototype.forEach.call(document.querySelectorAll(".mode-btn"), function(b){ b.setAttribute("aria-pressed", b===btn?"true":"false"); });
+  document.getElementById("dashView").hidden = state.mode === "bulk";
+  document.getElementById("bulkView").hidden = state.mode !== "bulk";
+  if (state.mode === "new"){ state.selectedSheep = null; state.eventType = ""; renderNewTemplate(); renderCycle(0,false); document.getElementById("cycleCaption").textContent = "New sheep always start at stage 1."; }
+  if (state.mode === "existing"){ renderAll(); }
+});
+
+/* ======================= BULK mode ========================================= */
+function setupBulk(){
+  var pSel = document.getElementById("bulkPaddock"), hSel = document.getElementById("bulkHandler");
+  paddocks.forEach(function(p){ var o=document.createElement("option"); o.value=p; o.textContent=p; pSel.appendChild(o); });
+  handlers.forEach(function(h){ var o=document.createElement("option"); o.value=h; o.textContent=h; hSel.appendChild(o); });
+  pSel.value = state.lastUsed.paddock; hSel.value = state.lastUsed.handler;
+
+  var parsed = [];
+  document.getElementById("bulkParse").addEventListener("click", function(){
+    var lines = document.getElementById("bulkInput").value.split("\n").map(function(l){return l.trim();}).filter(Boolean);
+    parsed = lines.map(function(line){
+      var c = line.split(",").map(function(x){return x.trim();});
+      return { tag:c[0]||"", breed:c[1]||"Merino", sex:c[2]||"Ewe", dam:c[3]||"", sire:c[4]||"", birthDate:c[5]||today };
+    });
+    var wrap = document.getElementById("bulkPreviewWrap"), table = document.getElementById("bulkPreviewTable");
+    if (!parsed.length){ wrap.hidden = true; document.getElementById("bulkImport").disabled = true; return; }
+    var head = "<tr><th>Tag</th><th>Breed</th><th>Sex</th><th>Dam</th><th>Sire</th><th>Birth date</th></tr>";
+    var rows = parsed.map(function(r){
+      return "<tr><td>"+(r.tag||"<em>auto</em>")+"</td><td>"+r.breed+"</td><td>"+r.sex+"</td><td>"+(r.dam||"—")+"</td><td>"+(r.sire||"—")+"</td><td>"+r.birthDate+"</td></tr>";
+    }).join("");
+    table.innerHTML = head + rows;
+    wrap.hidden = false;
+    document.getElementById("bulkImport").disabled = false;
+  });
+
+  document.getElementById("bulkImport").addEventListener("click", function(){
+    var paddock = pSel.value, handler = hSel.value;
+    state.lastUsed.paddock = paddock; state.lastUsed.handler = handler;
+    var queued = [];
+    parsed.forEach(function(r){
+      var tag = r.tag || nextTag(queued);
+      queued.push({tag:tag});
+      var bulkSheep = { id:tag.toLowerCase(), tag:tag, breed:r.breed, sex:r.sex, birthDaysAgo:0, stageIdx:0, lastEventType:"birth", lastEventDaysAgo:0, paddock:paddock, photos:[] };
+      seedHistory(bulkSheep);
+      roster.push(bulkSheep);
+      state.logged.unshift({ tag:tag, kind:"bulk", type:"Birth & Lambing", detail:r.breed+" · "+r.sex, date:r.birthDate, hasPhotos:false });
+    });
+    buildFeedPool();
+    renderLogs(); renderRoster(); renderFlockStats();
+    showToast("Imported " + parsed.length + " sheep");
+    parsed = [];
+    document.getElementById("bulkInput").value = "";
+    document.getElementById("bulkPreviewWrap").hidden = true;
+    document.getElementById("bulkImport").disabled = true;
+  });
+}
+
+/* ======================= flock-wide stats (real math, whole roster) ===== */
+function renderFlockStats(){
+  var el = document.getElementById("flockStats");
+  var predictions = roster.map(function(s){ return predictNext(s.weighHistory); });
+  var avgConfidence = Math.round(mean(predictions.map(function(p){return p.confidence;})));
+  var trendingUp = predictions.filter(function(p){ return p.slope > 0; }).length;
+  var flagged = roster.filter(function(s){ return s.healthFlag; }).length;
+  var cells = [
+    { label:"Total head", value: roster.length, cls:"" },
+    { label:"Avg. prediction confidence", value: avgConfidence+"%", cls:"accent" },
+    { label:"Trending up", value: trendingUp+" / "+roster.length, cls:"good" },
+    { label:"Active health flags", value: flagged, cls: flagged? "flag":"" }
+  ];
+  el.innerHTML = cells.map(function(c){
+    return '<div class="statcell"><span class="label">'+c.label+'</span><span class="value '+c.cls+'">'+c.value+'</span></div>';
+  }).join("");
+}
+
+/* ======================= live feed (ambient, flock-wide) ================= */
+var feedPool = [];
+function buildFeedPool(){
+  feedPool = [];
+  roster.forEach(function(s){
+    var wp = predictNext(s.weighHistory);
+    feedPool.push({ tag:s.tag, level:"predict", text:"next weigh-in predicted "+wp.predicted+" kg ("+wp.confidence+"% confidence)" });
+    if (s.fleeceHistory){
+      var fp = predictNext(s.fleeceHistory);
+      feedPool.push({ tag:s.tag, level:"predict", text:"fleece trend "+(fp.slope>=0?"up":"down")+" "+Math.abs(fp.trendPctPerReading)+"%/reading" });
+    }
+    if (s.healthFlag){
+      feedPool.push({ tag:s.tag, level:"flag", text:"escalation risk recomputed: "+healthEscalationRisk(s)+"%" });
+    }
+  });
+  feedPool.push({ tag:"SYSTEM", level:"good", text:"cohort averages recomputed across "+roster.length+" sheep" });
+  feedPool.push({ tag:"SYSTEM", level:"good", text:"trend lines refit from trailing history" });
+}
+var feedState = { items: [], cursor: 0 };
+function feedLevelColor(level){ return level==="flag" ? "var(--flag)" : level==="predict" ? "var(--accent)" : "var(--good)"; }
+function feedRelTime(sec){ return sec<60 ? sec+"s ago" : Math.round(sec/60)+"m ago"; }
+function seedFeed(){
+  buildFeedPool();
+  feedState.items = [];
+  for (var i=0;i<6;i++){
+    var f = feedPool[i % feedPool.length];
+    feedState.items.push({ tag:f.tag, level:f.level, text:f.text, ageAtSeed: (6-i)*47 });
+    feedState.cursor = i+1;
+  }
+  feedState.bootTime = Date.now();
+}
+function tickFeed(){
+  var f = feedPool[feedState.cursor % feedPool.length];
+  feedState.cursor++;
+  feedState.items.unshift({ tag:f.tag, level:f.level, text:f.text, ageAtSeed:0, fresh:true });
+  feedState.items = feedState.items.slice(0, 24);
+  renderFeed();
+}
+function renderFeed(){
+  var list = document.getElementById("feedList");
+  if (!list) return;
+  var elapsed = Math.round((Date.now()-feedState.bootTime)/1000);
+  list.innerHTML = "";
+  feedState.items.forEach(function(it){
+    var age = it.ageAtSeed + (it.fresh ? 0 : elapsed);
+    var row = document.createElement("div");
+    row.className = "feed-item" + (it.fresh ? " is-new" : "");
+    row.innerHTML = '<span class="feed-dot" style="background:'+feedLevelColor(it.level)+'"></span>'+
+      '<div class="feed-body"><span class="feed-text"><b class="mono">'+it.tag+'</b> — '+it.text+'</span><span class="feed-time">'+feedRelTime(age)+'</span></div>';
+    it.fresh = false;
+    list.appendChild(row);
+  });
+}
+
+/* ======================= master render =================================== */
+function renderAll(){
+  renderRoster();
+  renderFlockStats();
+  if (state.selectedSheep){
+    renderCycle(state.selectedSheep.stageIdx, !!state.selectedSheep.healthFlag);
+    renderTemplate();
+  } else {
+    renderCycle(null,false);
+    document.getElementById("tplCard").innerHTML = '<div class="empty-select">Pick a sheep from the roster — its template appears here, fields already filled from its record.</div>';
+    document.getElementById("effectsCard").innerHTML = '<div class="lead">Pick a sheep and an event to see what fires on save.</div>';
+  }
+  renderLogs();
+}
+
+/* ======================= boot ============================================= */
+setupSearch();
+setupBulk();
+seedFeed();
+pickSheep(roster[1]);         // TV-0547, mid-breeding — page is complete at rest, not an empty shell
+state.eventType = "shearing"; // demonstrate the template mechanism immediately
+renderAll();
+renderFeed();
+setInterval(tickFeed, 9000);
+setInterval(renderFeed, 15000); // keep "x ago" timestamps honest between new items
+</script>
